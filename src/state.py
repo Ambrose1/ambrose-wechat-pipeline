@@ -1,4 +1,4 @@
-from typing import TypedDict
+from typing import TypedDict, Optional
 
 try:
     from typing import NotRequired
@@ -13,5 +13,5 @@ class PipelineState(TypedDict):
     enhanced: str
     formatted: str
     draft_media_id: str
-    error: NotRequired[str]
+    error: NotRequired[Optional[str]]
     metadata: dict
