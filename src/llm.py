@@ -11,10 +11,17 @@ class LLMConfig:
     base_url: Optional[str] = None
     temperature: float = 0.7
 
+    def __repr__(self) -> str:
+        return (
+            f"LLMConfig(provider={self.provider!r}, model={self.model!r}, "
+            f"api_key='{self.api_key[:4]}***', base_url={self.base_url!r}, "
+            f"temperature={self.temperature})"
+        )
+
 
 def create_llm(config: LLMConfig) -> BaseChatModel:
     if not config.api_key:
-        raise ValueError("LLM_API_KEY is required")
+        raise ValueError("LLM_API_KEY 不能为空")
 
     provider = config.provider.lower()
 

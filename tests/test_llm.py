@@ -23,3 +23,15 @@ def test_llm_config_defaults():
     cfg = LLMConfig(provider="openai", model="gpt-4o-mini", api_key="sk-test")
     assert cfg.base_url is None
     assert cfg.temperature == 0.7
+
+
+def test_llm_config_repr_masks_api_key():
+    cfg = LLMConfig(provider="openai", model="gpt-4o", api_key="sk-1234567890abcdef")
+    r = repr(cfg)
+    assert "sk-1***" in r
+    assert "1234567890abcdef" not in r
+
+
+def test_create_claude_llm():
+    llm = create_llm(LLMConfig(provider="claude", model="claude-sonnet-4-6", api_key="sk-ant-test"))
+    assert "claude" in str(llm).lower()
