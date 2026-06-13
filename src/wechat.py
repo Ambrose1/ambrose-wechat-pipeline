@@ -51,6 +51,7 @@ class WeChatClient:
                     "articles": [{"title": title, "content": content}],
                 },
             )
+            resp.raise_for_status()
             data = resp.json()
 
             if data.get("errcode") == 40001:  # token 过期
@@ -61,6 +62,7 @@ class WeChatClient:
                     params={"access_token": token},
                     json={"articles": [{"title": title, "content": content}]},
                 )
+                resp.raise_for_status()
                 data = resp.json()
 
             if data.get("errcode", 0) != 0:
