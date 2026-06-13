@@ -8,10 +8,9 @@ from src.nodes.enhance import enhance_node
 from src.nodes.format import format_node
 from src.nodes.upload import upload_node
 from src.nodes.log import log_node
-from src.wechat import WeChatClient
 
 
-def build_graph(llm: BaseChatModel, wechat: WeChatClient, style: str = "深度"):
+def build_graph(llm: BaseChatModel, style: str = "深度"):
     graph = StateGraph(PipelineState)
 
     def _receive(state: PipelineState, config: RunnableConfig) -> dict:
@@ -28,7 +27,7 @@ def build_graph(llm: BaseChatModel, wechat: WeChatClient, style: str = "深度")
         return format_node(state)
 
     async def _upload(state: PipelineState) -> dict:
-        return await upload_node(state, wechat)
+        return await upload_node(state)
 
     def _log(state: PipelineState) -> dict:
         return log_node(state)
@@ -42,7 +41,6 @@ def build_graph(llm: BaseChatModel, wechat: WeChatClient, style: str = "深度")
 
     graph.set_entry_point("receive")
 
-    # 条件边：receive 出错直接跳 log
     def after_receive(state: PipelineState) -> str:
         if state.get("error"):
             return "log"

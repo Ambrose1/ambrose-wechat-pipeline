@@ -4,7 +4,6 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, Request, BackgroundTasks
 from fastapi.responses import JSONResponse
 from src.llm import create_llm, LLMConfig
-from src.wechat import WeChatClient
 from src.graph import build_graph
 from src.state import PipelineState
 from src.webhook import verify_token, run_pipeline
@@ -12,7 +11,7 @@ from src.webhook import verify_token, run_pipeline
 load_dotenv()
 
 
-def create_app(llm=None, wechat=None, webhook_token=None):
+def create_app(llm=None, webhook_token=None):
     app = FastAPI(title="WeChat Pipeline")
 
     _token = webhook_token or os.getenv("WEBHOOK_TOKEN", "")
@@ -22,12 +21,8 @@ def create_app(llm=None, wechat=None, webhook_token=None):
         api_key=os.getenv("LLM_API_KEY", ""),
         base_url=os.getenv("LLM_BASE_URL") or None,
     ))
-    _wechat = wechat or WeChatClient(
-        app_id=os.getenv("WECHAT_APP_ID", ""),
-        app_secret=os.getenv("WECHAT_APP_SECRET", ""),
-    )
     _style = os.getenv("ARTICLE_STYLE", "深度")
-    _graph = build_graph(_llm, _wechat, style=_style).compile()
+    _graph = build_graph(_llm, style=_style).compile()
 
     @app.get("/health")
     async def health():

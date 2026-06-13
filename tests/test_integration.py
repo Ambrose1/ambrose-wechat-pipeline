@@ -1,6 +1,6 @@
 import pytest
 import asyncio
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 from httpx import ASGITransport, AsyncClient
 from src.main import create_app
 
@@ -8,7 +8,6 @@ from src.main import create_app
 @pytest.fixture
 def mock_llm():
     llm = MagicMock()
-    # 模拟 LLM 返回润色和补充后的内容
     llm.invoke.side_effect = [
         MagicMock(content="润色后的文章"),
         MagicMock(content="引言\n\n润色后的文章\n\n总结\n\nCTA"),
@@ -17,19 +16,36 @@ def mock_llm():
 
 
 @pytest.fixture
-def mock_wechat():
-    client = AsyncMock()
-    client.add_draft.return_value = "draft_media_integration_test"
-    return client
+def mock_upload():
+    """mock playwright upload"""
+    with patch("src.nodes.upload._get_page") as mock:
+        mock_page = AsyncMock()
+        mock_page.is_closed.return_value = False
+        mock_new_page = AsyncMock()
+        mock_page.context.new_page.return_value = mock_new_page
+
+        mock_title_input = AsyncMock()
+        mock_body = AsyncMock()
+        mock_frame = AsyncMock()
+        mock_frame.return_value = mock_body
+
+        mock_new_page.locator.side_effect = lambda sel: {
+            "#title": mock_title_input,
+            "#ueditor_0": mock_frame,
+        }.get(sel, AsyncMock())
+        mock_new_page.frame_locator.return_value = mock_frame
+
+        mock.return_value = mock_page
+        yield mock
 
 
 @pytest.fixture
-def app(mock_llm, mock_wechat):
-    return create_app(llm=mock_llm, wechat=mock_wechat, webhook_token="integration-token")
+def app(mock_llm):
+    return create_app(llm=mock_llm, webhook_token="integration-token")
 
 
 @pytest.mark.asyncio
-async def test_full_pipeline(mock_llm, mock_wechat, app):
+async def test_full_pipeline(mock_llm, mock_upload, app):
     """端到端流程：webhook 接收 → 润色 → 补充 → 排版 → 上传 → 记录"""
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.post(
@@ -45,18 +61,14 @@ async def test_full_pipeline(mock_llm, mock_wechat, app):
     assert resp.status_code == 202
     assert resp.json() == {"status": "accepted"}
 
-    # 等待后台任务完成
-    await asyncio.sleep(0.1)
+    await asyncio.sleep(0.2)
 
-    # 验证 LLM 被调用了（润色 + 补充）
     assert mock_llm.invoke.call_count == 2
-
-    # 验证微信上传被调用
-    mock_wechat.add_draft.assert_called_once()
+    assert mock_upload.called
 
 
 @pytest.mark.asyncio
-async def test_pipeline_with_invalid_input(mock_llm, mock_wechat, app):
+async def test_pipeline_with_invalid_input(mock_llm, mock_upload, app):
     """无效输入不应该崩溃"""
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.post(

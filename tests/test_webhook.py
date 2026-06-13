@@ -1,5 +1,5 @@
 import pytest
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 from httpx import ASGITransport, AsyncClient
 from src.main import create_app
 
@@ -12,15 +12,9 @@ def mock_llm():
 
 
 @pytest.fixture
-def mock_wechat():
-    client = AsyncMock()
-    client.add_draft.return_value = "draft_media_test"
-    return client
-
-
-@pytest.fixture
-def app(mock_llm, mock_wechat):
-    return create_app(llm=mock_llm, wechat=mock_wechat, webhook_token="test-token")
+def app(mock_llm):
+    with patch("src.nodes.upload._get_page", new=AsyncMock()):
+        return create_app(llm=mock_llm, webhook_token="test-token")
 
 
 @pytest.mark.asyncio
