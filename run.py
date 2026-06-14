@@ -104,39 +104,22 @@ def main():
     with open(html_path, "w", encoding="utf-8") as f:
         f.write(state["formatted"])
 
-    # 复制标题到剪贴板
-    try:
-        import pyperclip
-        pyperclip.copy(title)
-    except Exception:
-        pass
+    # 用 macOS 原生 pbcopy 复制到剪贴板（可靠）
+    import subprocess
+    subprocess.run("pbcopy", input=state["formatted"], text=True)
+    print("✅ 正文已复制到剪贴板")
 
-    # 打开微信编辑器
-    editor_url = "https://mp.weixin.qq.com/cgi-bin/appmsg?t=media/appmsg_edit&action=edit&type=77&isMul=1&lang=zh_CN"
-    webbrowser.open(editor_url)
+    # 打开本地预览 + 微信编辑器
+    subprocess.run(["open", html_path])
+    webbrowser.open("https://mp.weixin.qq.com/cgi-bin/appmsg?t=media/appmsg_edit&action=edit&type=77&isMul=1&lang=zh_CN")
 
-    # 提示（标题已在剪贴板）
     print()
     print("—" * 40)
-    print("📋 标题已复制到剪贴板（Cmd+V 粘贴到标题栏）")
-    print("📋 正文 HTML 已复制，在正文区 Cmd+V 粘贴")
-    print(f"📁 HTML 已保存: {html_path}")
+    print("浏览器已打开两个页面：")
+    print("  左边 = 生成的文章预览")
+    print("  右边 = 微信公众号编辑器")
     print()
-    print("请在浏览器中：")
-    print("  1. 登录（如需要）")
-    print("  2. 标题栏 → Cmd+V")
-    print("  3. 正文区 → Cmd+V")
-    print("  4. 保存为草稿")
-
-    # 复制正文到剪贴板（后复制，这样 Cmd+V 默认粘贴正文）
-    try:
-        import pyperclip
-        pyperclip.copy(state["formatted"])
-    except Exception:
-        pass
-
-    print()
-    print("✅ 正文已写入剪贴板，切换到浏览器 Cmd+V 粘贴即可")
+    print("操作：左边 Cmd+A Cmd+C → 右边正文区 Cmd+V → 保存草稿")
 
 
 if __name__ == "__main__":
