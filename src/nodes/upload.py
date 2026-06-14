@@ -1,17 +1,19 @@
+"""
+微信公众号后台自动化上传 — 基于 Playwright persistent context。
+复用浏览器数据目录 data/browser-profile，一次扫码永久有效。
+"""
 import asyncio
 import os
-from pathlib import Path
 
-COOKIE_FILE = "data/wechat_cookies.json"
+MP_HOME = "https://mp.weixin.qq.com"
+PROFILE_DIR = "data/browser-profile"
 _browser = None
 _context = None
 _page = None
 
-MP_HOME = "https://mp.weixin.qq.com"
-
 
 async def _get_page():
-    """获取或创建浏览器 page，自动处理登录/会话恢复。"""
+    """获取或创建浏览器 page。使用 persistent context 保持登录态。"""
     global _browser, _context, _page
 
     if _page is not None and not _page.is_closed():
@@ -19,39 +21,41 @@ async def _get_page():
 
     from playwright.async_api import async_playwright
 
-    os.makedirs(os.path.dirname(COOKIE_FILE) or "data", exist_ok=True)
-
+    os.makedirs(PROFILE_DIR, exist_ok=True)
     pw = await async_playwright().start()
-    _browser = await pw.chromium.launch(headless=False)
 
-    if os.path.exists(COOKIE_FILE):
-        print("  [微信后台] 加载已保存的登录会话...")
-        _context = await _browser.new_context(storage_state=COOKIE_FILE)
-    else:
-        _context = await _browser.new_context()
-    _page = await _context.new_page()
+    _context = await pw.chromium.launch_persistent_context(
+        PROFILE_DIR,
+        headless=False,
+        viewport={"width": 1280, "height": 900},
+        locale="zh-CN",
+        channel=None,
+    )
+    _page = _context.pages[0] if _context.pages else await _context.new_page()
 
-    await _page.goto(f"{MP_HOME}/cgi-bin/home", wait_until="networkidle")
+    # 检查登录态
+    await _page.goto(f"{MP_HOME}/cgi-bin/home?t=home/index&lang=zh_CN", wait_until="networkidle", timeout=30000)
     await asyncio.sleep(3)
 
-    # 检测是否真正登录：登录页 body 含「立即注册」，管理后台含「新的创作」
-    body_text = (await _page.text_content("body")) or ""
+    body = (await _page.text_content("body")) or ""
 
-    if "立即注册" in body_text:
-        print("  [微信后台] 未登录，请扫描浏览器中的二维码...")
-        # 点登录按钮
-        login_btn = _page.locator("text=登录").first
-        if await login_btn.count() > 0:
-            await login_btn.click()
-            await asyncio.sleep(2)
-        # 等登录成功跳转（管理后台 URL 含 token）
+    if "立即注册" in body or "password" in body.lower():
+        print("  [微信后台] 请扫码登录（仅此一次）...")
+        # 点「登录」
+        try:
+            login_link = _page.locator('a:has-text("登录"), button:has-text("登录")').first
+            if await login_link.count() > 0 and await login_link.is_visible():
+                await login_link.click()
+                await asyncio.sleep(3)
+        except Exception:
+            pass
+        # 等跳到管理后台
         try:
             await _page.wait_for_url("**/cgi-bin/home*token=*", timeout=300000)
         except Exception:
             return None
-        print("  [微信后台] 登录成功。")
+        print("  [微信后台] 登录成功（已持久化，下次无需再扫）")
 
-    await _context.storage_state(path=COOKIE_FILE)
     return _page
 
 
@@ -60,7 +64,7 @@ async def upload_node(state: dict, client=None) -> dict:
     formatted = state.get("formatted", "")
 
     if not title or not formatted:
-        return {"draft_media_id": "", "error": "title or formatted is empty"}
+        return {"draft_media_id": "", "error": "title or formatted empty"}
 
     try:
         page = await _get_page()
@@ -69,202 +73,127 @@ async def upload_node(state: dict, client=None) -> dict:
 
         os.makedirs("data", exist_ok=True)
 
-        # ======== 进入编辑器 ========
-        print("  → 进入新建图文...")
-
-        if "home" not in page.url:
-            await page.goto(f"{MP_HOME}/cgi-bin/home", wait_until="networkidle")
-            await asyncio.sleep(2)
-
-        await page.screenshot(path="data/debug_01_home.png")
-
-        editor_page = None
-
-        # 尝试「新的创作」→「写新图文」
-        try:
-            new_create = page.locator("text=新的创作").first
-            if await new_create.count() > 0:
-                await new_create.click()
-                await asyncio.sleep(2)
-                await page.screenshot(path="data/debug_02_menu.png")
-
-                write_article = page.locator("text=写新图文").first
-                if await write_article.count() > 0 and await write_article.is_visible():
-                    async with page.context.expect_page(timeout=10000) as popup:
-                        await write_article.click()
-                    editor_page = await popup.value
-                    print("    通过「新的创作 → 写新图文」打开")
-        except Exception as e:
-            print(f"    菜单方式: {e}")
-
-        # 降级：同页导航
-        if editor_page is None:
-            if "appmsg" in page.url:
-                editor_page = page
-            else:
-                await page.goto(
-                    f"{MP_HOME}/cgi-bin/appmsg?t=media/appmsg_edit&action=edit&type=77&isMul=1&lang=zh_CN",
-                    wait_until="networkidle",
-                    timeout=30000,
-                )
-                await asyncio.sleep(5)
-                editor_page = page
-                print("    同页导航到编辑器")
-
-        # 等待 React 渲染
-        await editor_page.wait_for_load_state("networkidle", timeout=30000)
+        # ==== 打开编辑器 ====
+        print("  → 打开编辑器...")
+        await page.goto(
+            f"{MP_HOME}/cgi-bin/appmsg?t=media/appmsg_edit&action=edit&type=77&isMul=1&lang=zh_CN",
+            wait_until="networkidle", timeout=30000,
+        )
         await asyncio.sleep(5)
 
-        await editor_page.screenshot(path="data/debug_03_editor.png")
-        print(f"    编辑器 URL: {editor_page.url[:80]}")
-
-        if "login" in editor_page.url.lower():
-            print("    ⚠️  跳转到登录页，请扫码...")
-            await editor_page.wait_for_url("**/cgi-bin/appmsg*", timeout=300000)
-            await editor_page.wait_for_load_state("networkidle")
-            await asyncio.sleep(5)
-            print("    已进入编辑器")
-
-        # ======== 填写标题 ========
-        print("  → 填写标题...")
-        title_filled = False
-
-        # 等输入元素出现
-        try:
-            await editor_page.wait_for_selector(
-                'input, textarea, [contenteditable="true"]',
-                timeout=15000,
-            )
-        except Exception:
-            pass
-
-        for sel in [
-            "#title", "#appmsg_title",
-            'input[placeholder*="请在这里输入标题"]',
-            'input[placeholder*="标题"]',
-            'textarea[placeholder*="标题"]',
-        ]:
+        # 如果被踢回登录页，等用户扫码
+        if "login" in page.url.lower() or "password" in ((await page.text_content("body")) or "").lower():
+            print("  [微信后台] 会话过期，请扫码...")
             try:
-                el = editor_page.locator(sel).first
+                await page.wait_for_url("**/cgi-bin/appmsg*", timeout=300000)
+            except Exception:
+                return {"draft_media_id": "", "error": "编辑器登录超时"}
+            await page.wait_for_load_state("networkidle")
+            await asyncio.sleep(5)
+
+        await page.screenshot(path="data/debug_editor.png")
+        print(f"    编辑器: {page.url[:80]}")
+
+        # ==== 填标题 ====
+        print("  → 填标题...")
+        ok = False
+        for sel in ['#title', 'input[placeholder*="标题"]', '#appmsg_title']:
+            try:
+                el = page.locator(sel).first
                 if await el.count() > 0:
+                    await el.wait_for(state="visible", timeout=10000)
                     await el.click()
-                    await asyncio.sleep(0.2)
+                    await asyncio.sleep(0.3)
                     await el.fill("")
                     await el.fill(title)
                     await asyncio.sleep(0.3)
                     try:
-                        if await el.input_value() == title:
-                            title_filled = True
-                            print(f"    标题已填写 ({sel})")
-                            break
+                        v = await el.input_value()
                     except Exception:
-                        title_filled = True
-                        print(f"    标题已填写 ({sel})")
+                        v = title
+                    if v == title:
+                        ok = True
+                        print(f"    标题 ✓ ({sel})")
                         break
             except Exception:
                 continue
+        if not ok:
+            print("    ⚠ 标题未自动填入，请手动填写")
 
-        # 键盘输入兜底
-        if not title_filled:
+        # ==== 填正文 ====
+        print("  → 填正文...")
+        ok = False
+        # 尝试 iframe
+        for sel in ['#ueditor_0', 'iframe[id*="ueditor"]', 'iframe[id*="editor"]', "iframe"]:
             try:
-                el = editor_page.locator("#title").first
-                if await el.count() > 0:
-                    await el.click()
-                await editor_page.keyboard.type(title, delay=50)
-                title_filled = True
-                print("    标题已填写 (键盘输入)")
-            except Exception:
-                pass
-
-        if not title_filled:
-            print("    ⚠️  未找到标题输入框")
-
-        # ======== 填写正文 ========
-        print("  → 填写正文...")
-        content_filled = False
-
-        for sel in [
-            "#ueditor_0", 'iframe[id*="ueditor"]', 'iframe[id*="editor"]', "iframe",
-        ]:
-            try:
-                frame = editor_page.frame_locator(sel)
+                frame = page.frame_locator(sel)
                 body = frame.locator("body")
-                if await body.count() > 0 and await body.first.is_visible():
-                    await body.first.evaluate(
-                        "el => el.innerHTML = arguments[0]", formatted
-                    )
+                if await body.count() > 0:
+                    await body.first.evaluate("el => el.innerHTML = arguments[0]", formatted)
                     await body.first.press("End")
                     await body.first.press("Enter")
-                    content_filled = True
-                    print(f"    正文已填写 (iframe: {sel})")
+                    ok = True
+                    print(f"    正文 ✓ (iframe {sel})")
                     break
             except Exception:
                 continue
-
-        if not content_filled:
+        # 尝试 contenteditable
+        if not ok:
             for sel in ['div[contenteditable="true"]', '[role="textbox"]']:
                 try:
-                    el = editor_page.locator(sel).first
+                    el = page.locator(sel).first
                     if await el.count() > 0:
-                        await el.evaluate(
-                            "el => el.innerHTML = arguments[0]", formatted
-                        )
-                        content_filled = True
-                        print(f"    正文已填写 ({sel})")
+                        await el.evaluate("el => el.innerHTML = arguments[0]", formatted)
+                        ok = True
+                        print(f"    正文 ✓ ({sel})")
                         break
                 except Exception:
                     continue
-
-        if not content_filled:
+        # JS 兜底
+        if not ok:
             try:
-                await editor_page.evaluate(f"""
+                await page.evaluate(f"""
                     document.querySelectorAll('iframe').forEach(f => {{
-                        try {{ f.contentDocument.body.innerHTML = {repr(formatted)}; }} catch(e) {{}}
+                        try{{f.contentDocument.body.innerHTML={repr(formatted)}}}catch(e){{}}
                     }});
-                    const ce = document.querySelector('[contenteditable="true"]');
-                    if (ce) ce.innerHTML = {repr(formatted)};
+                    const ce=document.querySelector('[contenteditable="true"]');
+                    if(ce)ce.innerHTML={repr(formatted)};
                 """)
-                content_filled = True
-                print("    正文已填写 (JS 盲写)")
+                ok = True
+                print("    正文 ✓ (JS)")
             except Exception:
                 pass
+        if not ok:
+            print("    ⚠ 正文未自动填入")
 
-        if not content_filled:
-            print("    ⚠️  未找到编辑器")
-
-        # ======== 保存 ========
+        # ==== 保存 ====
         print("  → 保存草稿...")
-        await editor_page.screenshot(path="data/debug_04_before_save.png")
         saved = False
-
         for sel in [
             "#js_submit",
             'button:has-text("保存为草稿")',
             'button:has-text("保存")',
             'a:has-text("保存为草稿")',
-            '[title="保存"]',
+            'button:has-text("发表")',  # 有时按钮叫发表
         ]:
             try:
-                btn = editor_page.locator(sel).first
+                btn = page.locator(sel).first
                 if await btn.count() > 0 and await btn.is_visible():
                     await btn.click()
                     await asyncio.sleep(3)
                     saved = True
-                    print(f"    已点击保存 ({sel})")
+                    print(f"    保存 ✓ ({sel})")
                     break
             except Exception:
                 continue
-
         if not saved:
-            print("    ⚠️  请手动点击保存按钮")
+            print("    ⚠ 未找到保存按钮，请手动点击")
+            await asyncio.sleep(15)
 
-        await editor_page.screenshot(path="data/debug_05_after_save.png")
-        print("    浏览器保持打开 15 秒，确认草稿已保存后自动关闭")
-        await asyncio.sleep(15)
-
+        await page.screenshot(path="data/debug_saved.png")
         return {"draft_media_id": "saved"}
 
     except Exception as e:
         import traceback
         traceback.print_exc()
-        return {"draft_media_id": "", "error": f"upload failed: {e}"}
+        return {"draft_media_id": "", "error": str(e)}
