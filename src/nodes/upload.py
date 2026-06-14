@@ -32,15 +32,21 @@ async def _get_page():
     _page = await _context.new_page()
 
     await _page.goto(f"{MP_HOME}/cgi-bin/home", wait_until="networkidle")
+    await asyncio.sleep(3)
 
-    need_login = "login" in _page.url.lower() or "登录" in await _page.title()
+    # 检测是否真正登录：登录页 body 含「立即注册」，管理后台含「新的创作」
+    body_text = (await _page.text_content("body")) or ""
 
-    if need_login:
-        print("  [微信后台] 会话已过期，请扫描浏览器中的二维码登录...")
-        _page = await _context.new_page()
-        await _page.goto(f"{MP_HOME}", wait_until="networkidle")
+    if "立即注册" in body_text:
+        print("  [微信后台] 未登录，请扫描浏览器中的二维码...")
+        # 点登录按钮
+        login_btn = _page.locator("text=登录").first
+        if await login_btn.count() > 0:
+            await login_btn.click()
+            await asyncio.sleep(2)
+        # 等登录成功跳转（管理后台 URL 含 token）
         try:
-            await _page.wait_for_url("**/cgi-bin/home*", timeout=300000)
+            await _page.wait_for_url("**/cgi-bin/home*token=*", timeout=300000)
         except Exception:
             return None
         print("  [微信后台] 登录成功。")
