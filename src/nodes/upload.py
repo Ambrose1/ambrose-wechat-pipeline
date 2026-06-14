@@ -40,21 +40,16 @@ async def _get_page():
     body = (await _page.text_content("body")) or ""
 
     if "立即注册" in body or "password" in body.lower():
-        print("  [微信后台] 请扫码登录（仅此一次）...")
-        # 点「登录」
+        print("  ┌─────────────────────────────────────────┐")
+        print("  │  首次使用，请在浏览器中扫码登录         │")
+        print("  │  登录成功后程序自动继续，无需其他操作   │")
+        print("  │  此步骤仅需一次，后续永久有效           │")
+        print("  └─────────────────────────────────────────┘")
         try:
-            login_link = _page.locator('a:has-text("登录"), button:has-text("登录")').first
-            if await login_link.count() > 0 and await login_link.is_visible():
-                await login_link.click()
-                await asyncio.sleep(3)
-        except Exception:
-            pass
-        # 等跳到管理后台
-        try:
-            await _page.wait_for_url("**/cgi-bin/home*token=*", timeout=300000)
+            await _page.wait_for_url("**/cgi-bin/home*token=*", timeout=600000)
         except Exception:
             return None
-        print("  [微信后台] 登录成功（已持久化，下次无需再扫）")
+        print("  [微信后台] ✅ 登录成功，会话已持久化")
 
     return _page
 
@@ -85,7 +80,7 @@ async def upload_node(state: dict, client=None) -> dict:
         if "login" in page.url.lower() or "password" in ((await page.text_content("body")) or "").lower():
             print("  [微信后台] 会话过期，请扫码...")
             try:
-                await page.wait_for_url("**/cgi-bin/appmsg*", timeout=300000)
+                await page.wait_for_url("**/cgi-bin/appmsg*", timeout=600000)
             except Exception:
                 return {"draft_media_id": "", "error": "编辑器登录超时"}
             await page.wait_for_load_state("networkidle")
